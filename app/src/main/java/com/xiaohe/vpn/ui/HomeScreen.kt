@@ -59,6 +59,9 @@ import com.xiaohe.vpn.VpnState
 import com.xiaohe.vpn.countryDisplayName
 import com.xiaohe.vpn.flagEmoji
 import com.xiaohe.vpn.protoLabel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -90,6 +93,7 @@ fun HomeScreen(
     onToggleTheme: () -> Unit,
 ) {
     val ctx = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
 
     // 未连接时把「本机 IP」实测出来（问一次公网，不是读网卡）。会联网，
     // 所以放 IO 线程；连上之后这一行换成出口，不需要再问。
@@ -99,12 +103,16 @@ fun HomeScreen(
         }
     }
 
-    // 运行时长和速率要连续变化，所以按秒轮询；空闲时刷一次就够。
-    LaunchedEffect(state.isConnected, state.isBusy) {
+    // 运行时长和速率只在界面可见时需要连续刷新。
+    // VPN 隧道由前台 VpnService 独立维持；切到后台/锁屏时停止 UI 轮询，
+    // 避免每秒解析状态、唤醒主线程，回到前台后 repeatOnLifecycle 会自动恢复。
+    LaunchedEffect(state.isConnected, state.isBusy, lifecycleOwner) {
         if (state.isConnected || state.isBusy) {
-            while (true) {
-                EngineBridge.refresh()
-                delay(1_000)
+            lifecycleOwner.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    EngineBridge.refresh()
+                    delay(1_000)
+                }
             }
         } else {
             EngineBridge.refresh()

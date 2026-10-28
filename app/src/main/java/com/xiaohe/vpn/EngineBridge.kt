@@ -1,6 +1,8 @@
 package com.xiaohe.vpn
 
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.xiaohe.engine.Engine_
 import com.xiaohe.engine.LogSink
 import com.xiaohe.engine.Protector
@@ -9,6 +11,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 进程内唯一的引擎持有者 —— 桌面版会话模型的替代品。
@@ -26,10 +29,14 @@ import java.io.File
 object EngineBridge {
 
     /**
-     * 内存里保留多少行日志。界面只显示最近 40 行，但「复制 / 导出」拿的是这一份
-     * 完整缓冲 —— 排查问题时前面那几十行往往才是关键，截断等于把证据丢了。
+     * 移动端限制日志缓冲区，降低长时间运行时的列表复制与 GC 压力。
+     * 导出仍保留最近 1000 行，足够覆盖常见连接故障排查。
      */
-    private const val LOG_KEEP = 5000
+    private const val LOG_KEEP = 1000
+
+    // Go 引擎可能高频回调日志；合并状态刷新，避免每行都重复解析 StatusJSON。
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val refreshQueued = AtomicBoolean(false)
 
     private var engine: Engine_? = null
 
@@ -63,7 +70,13 @@ object EngineBridge {
         e.setLogSink(object : LogSink {
             override fun onLog(line: String) {
                 _state.value = _state.value.copy(logs = (_state.value.logs + line).takeLast(LOG_KEEP))
-                refresh(e)
+                // 日志立即入缓冲；高频回调时将状态解析合并为每 250ms 至多一次。
+                if (refreshQueued.compareAndSet(false, true)) {
+                    mainHandler.postDelayed({
+                        refreshQueued.set(false)
+                        refresh(e)
+                    }, 250L)
+                }
             }
         })
         engine = e
