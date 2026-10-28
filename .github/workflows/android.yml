@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - xehn-android
+      - security-redmi-optimization
     tags:
       - "v*"
     paths:
